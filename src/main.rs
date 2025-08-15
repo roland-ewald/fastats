@@ -1,10 +1,12 @@
 use clap::Parser;
-use std::{fs, io::Error, io::ErrorKind, path::PathBuf, result::Result};
+use noodles_fasta as fasta;
+use std::error::Error;
+use std::fs::File;
+use std::{fs, io::BufReader, io::ErrorKind, path::PathBuf, result::Result};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
-
     fasta_file: PathBuf,
 
     #[arg(
@@ -17,14 +19,14 @@ struct Cli {
 }
 
 impl Cli {
-    fn validate(self: &Cli) -> Result<(), Error> {
+    fn validate(self: &Cli) -> Result<(), std::io::Error> {
         if !self.fasta_file.is_file() {
-            Err(Error::new(
+            Err(std::io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("The input file '{:?}' is not a file.", self.fasta_file),
             ))
         } else if self.output_dir.is_file() {
-            Err(Error::new(
+            Err(std::io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("The output directory '{:?}' is a file.", self.output_dir),
             ))
@@ -40,21 +42,28 @@ impl Cli {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::parse();
-    let validation_result = args.validate();
-    if validation_result.is_err() {
-        eprintln!(
-            "Stopping, as input parameters are invalid: '{:?}'.",
-            validation_result.err()
-        );
-    } else {
+    args.validate().expect("Failed to validate CLI arguments");
+    println!(
+        "Input file: {:?}, Output directory: {:?}",
+        args.fasta_file, args.output_dir
+    );
+
+    let mut reader = File::open(args.fasta_file)
+        .map(BufReader::new)
+        .map(fasta::io::Reader::new)?;
+
+    for result in reader.records() {
+        let record = result?;
         println!(
-            "Input file: {:?}, Output directory: {:?}",
-            args.fasta_file, args.output_dir
+            "Processing record: {:?} with length {:?}",
+            record.definition().name(),
+            record.sequence().len()
         );
-        println!("Done.");
     }
+    println!("Done.");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -71,4 +80,3 @@ mod tests {
         assert!(cli.validate().is_err());
     }
 }
-
