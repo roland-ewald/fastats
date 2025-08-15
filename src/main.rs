@@ -2,18 +2,15 @@ use clap::Parser;
 use std::{fs, io::Error, io::ErrorKind, path::PathBuf, result::Result};
 
 #[derive(Parser)]
+#[command(version, about, long_about = None)]
 struct Cli {
-    #[arg(
-        short = 'i',
-        long = "input-file",
-        help = "The input FASTA file to analyze."
-    )]
-    input_file: PathBuf,
+
+    fasta_file: PathBuf,
 
     #[arg(
         short = 'o',
         long = "output-dir",
-        default_value = "./output",
+        default_value = ".",
         help = "The output directory for the BED and summary files."
     )]
     output_dir: PathBuf,
@@ -21,10 +18,10 @@ struct Cli {
 
 impl Cli {
     fn validate(self: &Cli) -> Result<(), Error> {
-        if !self.input_file.is_file() {
+        if !self.fasta_file.is_file() {
             Err(Error::new(
                 ErrorKind::InvalidInput,
-                format!("The input file '{:?}' is not a file.", self.input_file),
+                format!("The input file '{:?}' is not a file.", self.fasta_file),
             ))
         } else if self.output_dir.is_file() {
             Err(Error::new(
@@ -54,7 +51,7 @@ fn main() {
     } else {
         println!(
             "Input file: {:?}, Output directory: {:?}",
-            args.input_file, args.output_dir
+            args.fasta_file, args.output_dir
         );
         println!("Done.");
     }
@@ -67,7 +64,7 @@ mod tests {
     #[test]
     fn cli_validation() {
         let cli = Cli {
-            input_file: PathBuf::from("test.fasta"),
+            fasta_file: PathBuf::from("test.fasta"),
             output_dir: PathBuf::from("output"),
         };
         // Test invalid input file
