@@ -56,11 +56,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for result in reader.records() {
         let record = result?;
+        let record_name = record.definition().name();
         println!(
             "Processing record: {:?} with length {:?}",
             record.definition().name(),
             record.sequence().len()
         );
+
+        let sequence: &[u8] = record.sequence().as_ref();
+        let mut hard_mask_counter= 0;
+        for base in sequence {
+            if *base == b'N' {
+                hard_mask_counter += 1;
+            }
+        }
+        println!("Found {} 'N' bases in sequence: {}", hard_mask_counter, record_name);
     }
     println!("Done.");
     Ok(())
