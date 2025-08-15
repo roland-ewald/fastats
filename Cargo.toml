@@ -1,0 +1,21 @@
+[package]
+name = "fastats"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+keywords = ["fasta", "bioinformatics"]
+categories = ["science::bioinformatics::genomics", "command-line-utilities"]
+description = "Provides a CLI to generate stats for FASTA files."
+homepage = "https://github.com/roland-ewald/fastats"
+repository = "https://github.com/roland-ewald/fastats"
+readme = "README.md"
+
+[dependencies]
+clap = { version = "4.5.42", features = ["derive"] }
+lazy_static = "1.5.0"
+serde = { version = "1.0.219", features = ["derive"] }
+noodles = { version = "0.100.0", features = ["bed", "fasta"] }
+
+[[bin]]
+name = "fastats"
+path = "src/main.rs"
