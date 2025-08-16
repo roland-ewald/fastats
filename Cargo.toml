@@ -5,7 +5,7 @@ edition = "2024"
 license = "Apache-2.0"
 keywords = ["fasta", "bioinformatics"]
 categories = ["science::bioinformatics::genomics", "command-line-utilities"]
-description = "Provides a CLI to generate stats for FASTA files."
+description = "Provides a CLI to generate statistics for FASTA files."
 homepage = "https://github.com/roland-ewald/fastats"
 repository = "https://github.com/roland-ewald/fastats"
 readme = "README.md"
@@ -14,8 +14,9 @@ readme = "README.md"
 clap = { version = "4.5.42", features = ["derive"] }
 lazy_static = "1.5.0"
 serde = { version = "1.0.219", features = ["derive"] }
-noodles = { version = "0.100.0", features = ["bed", "fasta"] }
+noodles-core = "0.18.0"
 noodles-fasta = "0.55.0"
+noodles-bed = "0.27.0"
 
 [[bin]]
 name = "fastats"

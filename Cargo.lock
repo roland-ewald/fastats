@@ -174,7 +174,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "lazy_static",
- "noodles",
+ "noodles-bed",
+ "noodles-core",
  "noodles-fasta",
  "serde",
 ]
@@ -310,16 +311,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
-]
-
-[[package]]
-name = "noodles"
-version = "0.100.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a5d9c17e7b3fd97eee958bfba83522d3da540c395f7ae071a8fa4bb7e85969e"
-dependencies = [
- "noodles-bed",
- "noodles-fasta",
 ]
 
 [[package]]
