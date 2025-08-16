@@ -67,6 +67,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             return;
         }
 
+        let non_masked_bed_path = format!("{}-non-masked.bed", record_name);
+        let mut non_masked_bed_writer: BedWriter<3, BufWriter<File>> = bed::io::writer::Builder::default()
+        .build_from_path(non_masked_bed_path.clone())
+        .expect(format!("Could not write to output BED file '{}'.", non_masked_bed_path).as_str());
+
         let soft_masked_bed_path = format!("{}-soft-masked.bed", record_name);
         let mut soft_masked_bed_writer: BedWriter<3, BufWriter<File>> = bed::io::writer::Builder::default()
         .build_from_path(soft_masked_bed_path.clone())
@@ -78,43 +83,72 @@ fn main() -> Result<(), Box<dyn Error>> {
         .expect(format!("Could not write to output BED file '{}'.", hard_masked_bed_path).as_str());
 
         let sequence: &[u8] = record.sequence().as_ref();
-        let mut hard_mask_counter:usize = 0;
-        let mut soft_mask_counter:usize = 0;
-        let mut gc_counter:usize = 0;
+        
         let mut index1: usize = 0;
-        let mut soft_masked_region_start1:Option<usize> = None;
-        let mut hard_masked_region_start1:Option<usize> = None;
+        let mut gc_counter:usize = 0;
+
+        let mut non_mask_counter: usize = 0;
+        let mut soft_mask_counter: usize = 0;
+        let mut hard_mask_counter: usize = 0;
+
+        let mut non_mask_region_start1: Option<usize> = None;
+        let mut soft_masked_region_start1: Option<usize> = None;
+        let mut hard_masked_region_start1: Option<usize> = None;
 
         for base in sequence {
             index1 += 1;
-            let mut soft_masking = false;
-            let mut hard_masking = false;
+            let mut non_masking: bool = false;
+            let mut soft_masking: bool = false;
+            let mut hard_masking: bool = false;
             match *base {
-                b'C' | b'G' => {
+                b'C' | b'G' => {                    
                     gc_counter += 1;
+                    non_mask_counter += 1;
+                    
+                    non_masking = true;
                 },
                 b'c' | b'g' => {
                     gc_counter += 1;
                     soft_mask_counter += 1;
+                
                     soft_masking = true;
                 }
                 b'A' | b'T' => {
+                    non_mask_counter += 1;
+                
+                    non_masking = true;
                 }
                 b'a' | b't' => {
                     soft_mask_counter += 1;
+                
                     soft_masking = true;
                 },
                 b'N' => {
                     hard_mask_counter += 1;
+                
                     hard_masking = true;
                 },
                 b'n' => {
                     soft_mask_counter += 1;
                     hard_mask_counter += 1;
+                
                     soft_masking = true;
                     hard_masking = true;
                 },
                 _ => panic!("Unexpected base: '{}'", *base as char),
+            }
+
+            if non_masking {
+                if non_mask_region_start1.is_none() {
+                    non_mask_region_start1 = Some(index1);
+                }
+            } else if let Some(start1) = non_mask_region_start1 {
+                let _result = write_bed_record(&mut non_masked_bed_writer,
+                    record_name.to_string().as_str(),
+                    start1,
+                    index1 - 1,
+                );
+                non_mask_region_start1 = None;
             }
 
             if soft_masking {
@@ -142,13 +176,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 hard_masked_region_start1 = None;
             }
-
         }
+        assert!(non_mask_counter + soft_mask_counter + hard_mask_counter == sequence.len(),
+            "The sum of masked bases does not match the sequence length ({}) for '{}'. This seems to be a bug", sequence.len(), record_name);
 
         println!(
-            "Found {} 'N' bases, {} soft-masked bases in sequence: {} (GC ratio: {:.2}, overall length: {})",
+            "Found {} hard-masked bases, {} soft-masked bases, {} non-masked bases in sequence '{}' (GC ratio: {:.2}, overall length: {})",
             hard_mask_counter,
             soft_mask_counter,
+            non_mask_counter,
             record_name,
             gc_counter as f64 / sequence.len() as f64,
             sequence.len()
