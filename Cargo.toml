@@ -11,13 +11,14 @@ repository = "https://github.com/roland-ewald/fastats"
 readme = "README.md"
 
 [dependencies]
+bstr = "1.12.0"
 clap = { version = "4.5.42", features = ["derive"] }
 lazy_static = "1.5.0"
-serde = { version = "1.0.219", features = ["derive"] }
+noodles-bed = "0.27.0"
 noodles-core = "0.18.0"
 noodles-fasta = "0.55.0"
-noodles-bed = "0.27.0"
 rayon = "1.11.0"
+serde = { version = "1.0.219", features = ["derive"] }
 
 [[bin]]
 name = "fastats"

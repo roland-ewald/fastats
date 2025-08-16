@@ -1,5 +1,6 @@
 # Custom Dictionary Words
+bstr
 FASTA
 fastats
-rustc
 MSVC
+rustc
