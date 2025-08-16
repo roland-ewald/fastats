@@ -4,10 +4,12 @@ use clap::Parser;
 use noodles_bed as bed;
 use noodles_core::Position;
 use noodles_fasta as fasta;
+use noodles_fasta::Record as FastaRecord;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
 use std::{fs, io::BufReader, io::ErrorKind, path::PathBuf, result::Result};
+use rayon::prelude::*;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -51,36 +53,42 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::parse();
     args.validate().expect("Failed to validate CLI arguments");
     println!(
-        "Input file: {:?}, Output directory: {:?}",
+        "Input file: '{:?}'. Output directory: '{:?}'.\nNow loading the FASTA records...",
         args.fasta_file, args.output_dir
     );
 
-    {
-        let mut writer: BedWriter<3, BufWriter<File>> = bed::io::writer::Builder::default()
-            .build_from_path(args.output_dir.join("output.bed"))?;
-        write_bed_record(&mut writer, "chr2", 123, 124)?;
-    }
-    let mut reader = File::open(args.fasta_file)
-        .map(BufReader::new)
-        .map(fasta::io::Reader::new)?;
-
-    for result in reader.records() {
-        let record = result?;
+    let mut reader = File::open(args.fasta_file).map(BufReader::new).map(fasta::io::Reader::new)?;
+    let records: Vec<FastaRecord> = reader.records().collect::<Result<_, _>>()?;
+    
+    let _results: Vec<()> = records.par_iter().map(|record| {
         let record_name = record.definition().name();
         if record.sequence().len() == 0 {
             println!("Skipping empty sequence: {}", record.definition().name());
-            continue;
+            return;
         }
 
-        // TODO: run this in parallel
-        // TODO: store results in BED files AND a JSON summary file (so that eg jq can be used downstream)
+        let soft_masked_bed_path = format!("{}-soft-masked.bed", record_name);
+        let mut soft_masked_bed_writer: BedWriter<3, BufWriter<File>> = bed::io::writer::Builder::default()
+        .build_from_path(soft_masked_bed_path.clone())
+        .expect(format!("Could not write to output BED file '{}'.", soft_masked_bed_path).as_str());
+
+        let hard_masked_bed_path = format!("{}-hard-masked.bed", record_name);
+        let mut hard_masked_bed_writer: BedWriter<3, BufWriter<File>> = bed::io::writer::Builder::default()
+        .build_from_path(hard_masked_bed_path.clone())
+        .expect(format!("Could not write to output BED file '{}'.", hard_masked_bed_path).as_str());
 
         let sequence: &[u8] = record.sequence().as_ref();
-        let mut hard_mask_counter = 0;
-        let mut soft_mask_counter = 0;
-        let mut gc_counter = 0;
+        let mut hard_mask_counter:usize = 0;
+        let mut soft_mask_counter:usize = 0;
+        let mut gc_counter:usize = 0;
+        let mut index1: usize = 0;
+        let mut soft_masked_region_start1:Option<usize> = None;
+        let mut hard_masked_region_start1:Option<usize> = None;
 
         for base in sequence {
+            index1 += 1;
+            let mut soft_masking = false;
+            let mut hard_masking = false;
             match *base {
                 b'C' | b'G' => {
                     gc_counter += 1;
@@ -88,18 +96,53 @@ fn main() -> Result<(), Box<dyn Error>> {
                 b'c' | b'g' => {
                     gc_counter += 1;
                     soft_mask_counter += 1;
+                    soft_masking = true;
                 }
-                b'A' | b'T' | b'a' | b't' => {                    
+                b'A' | b'T' => {
                 }
+                b'a' | b't' => {
+                    soft_mask_counter += 1;
+                    soft_masking = true;
+                },
                 b'N' => {
                     hard_mask_counter += 1;
+                    hard_masking = true;
                 },
                 b'n' => {
                     soft_mask_counter += 1;
                     hard_mask_counter += 1;
+                    soft_masking = true;
+                    hard_masking = true;
                 },
-                _ => panic!("Unexpected base: {}", *base as char),
+                _ => panic!("Unexpected base: '{}'", *base as char),
             }
+
+            if soft_masking {
+                if soft_masked_region_start1.is_none() {
+                    soft_masked_region_start1 = Some(index1);
+                }
+            } else if let Some(start1) = soft_masked_region_start1 {
+                let _result = write_bed_record( &mut soft_masked_bed_writer,
+                    record_name.to_string().as_str(),
+                    start1,
+                    index1,
+                );
+                soft_masked_region_start1 = None;
+            }
+
+            if hard_masking {
+                if hard_masked_region_start1.is_none() {
+                    hard_masked_region_start1 = Some(index1);
+                }
+            } else if let Some(start1) = hard_masked_region_start1 {
+                let _result = write_bed_record( &mut hard_masked_bed_writer,
+                    record_name.to_string().as_str(),
+                    start1,
+                    index1,
+                );
+                hard_masked_region_start1 = None;
+            }
+
         }
 
         println!(
@@ -110,7 +153,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             gc_counter as f64 / sequence.len() as f64,
             sequence.len()
         );
-    }
+    }).collect();
+    // TODO: store results in BED files AND a JSON summary file (so that eg jq can be used downstream)
     println!("Done.");
     Ok(())
 }
@@ -142,5 +186,14 @@ mod tests {
         };
         // Test invalid input file
         assert!(cli.validate().is_err());
+    }
+
+    #[test]
+    fn write_bed_record_ok() -> Result<(), Box<dyn Error>> {
+        {
+        let mut writer: BedWriter<3, BufWriter<File>> = bed::io::writer::Builder::default().build_from_path("test.bed")?;
+        write_bed_record(&mut writer, "chr2", 123, 124)?;
+        }
+    Ok(())
     }
 }
