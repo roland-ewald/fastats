@@ -1,4 +1,3 @@
-use bstr::ByteSlice;
 use clap::Parser;
 use fastats::*;
 use noodles_fasta as fasta;
@@ -24,6 +23,8 @@ struct Cli {
         help = "The output directory for the BED and summary files."
     )]
     output_dir: PathBuf,
+
+    // 1) quiet mode, 2) contig regex match, 3) json output file
 }
 
 impl Cli {
@@ -53,97 +54,23 @@ impl Cli {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::parse();
     args.validate().expect("Failed to validate CLI arguments");
-    println!(
+    //TODO: print only if JSON output file given and not in quiet mode
+/*     println!(
         "Input file: '{:?}'. Output directory: '{:?}'.\nNow loading the FASTA records...",
         args.fasta_file, args.output_dir
-    );
+    ); */
 
     let mut reader = File::open(args.fasta_file).map(BufReader::new).map(fasta::io::Reader::new)?;
     let records: Vec<FastaRecord> = reader.records().collect::<Result<_, _>>()?;
     
-    let _results: Vec<()> = records.par_iter().map(|record| {
+    let record_processing = process_fasta(&args.output_dir);
+    let mut sequence_statistics: Vec<SequenceStatistics> = records.par_iter().flat_map(record_processing).collect();
+    sequence_statistics.sort_by_key(|s| s.sequence_name.clone());
 
-        let record_name: &str = record.definition().name().to_str()
-            .expect(format!("Failed to convert record name to string: '{}'", record.definition().name()).as_str());
-        
-        if record.sequence().len() == 0 {
-            println!("Skipping empty sequence: {}", record.definition().name());
-            return;
-        }
+    let json_output = serde_json::to_string_pretty(&sequence_statistics).unwrap();
 
-        let mut non_masked_bed_writer = create_bed_writer(&format!("{}-non-masked.bed", record_name));
-        let mut soft_masked_bed_writer = create_bed_writer(&format!("{}-soft-masked.bed", record_name));
-        let mut hard_masked_bed_writer = create_bed_writer(&format!("{}-hard-masked.bed", record_name));
-
-        let sequence: &[u8] = record.sequence().as_ref();
-        
-        let mut index1: usize = 0;
-        let mut gc_counter:usize = 0;
-
-        let mut non_mask_counter: usize = 0;
-        let mut soft_mask_counter: usize = 0;
-        let mut hard_mask_counter: usize = 0;
-
-        let mut non_mask_region_start1: Option<usize> = None;
-        let mut soft_masked_region_start1: Option<usize> = None;
-        let mut hard_masked_region_start1: Option<usize> = None;
-
-        for base in sequence {
-            index1 += 1;
-            let mut non_masking: bool = false;
-            let mut soft_masking: bool = false;
-            let mut hard_masking: bool = false;
-            match *base {
-                b'C' | b'G' => {                    
-                    gc_counter += 1;
-                    non_mask_counter += 1;
-                    non_masking = true;
-                },
-                b'c' | b'g' => {
-                    gc_counter += 1;
-                    soft_mask_counter += 1;
-                    soft_masking = true;
-                }
-                b'A' | b'T' => {
-                    non_mask_counter += 1;
-                    non_masking = true;
-                }
-                b'a' | b't' => {
-                    soft_mask_counter += 1;
-                    soft_masking = true;
-                },
-                b'N' => {
-                    hard_mask_counter += 1;
-                    hard_masking = true;
-                },
-                b'n' => {
-                    soft_mask_counter += 1;
-                    hard_mask_counter += 1;
-                    soft_masking = true;
-                    hard_masking = true;
-                },
-                _ => panic!("Unexpected base: '{}'", *base as char),
-            }
-
-            update_mask_region(&mut non_mask_region_start1, non_masking, &mut non_masked_bed_writer, record_name, index1);
-            update_mask_region(&mut soft_masked_region_start1, soft_masking, &mut soft_masked_bed_writer, record_name, index1);
-            update_mask_region(&mut hard_masked_region_start1, hard_masking, &mut hard_masked_bed_writer, record_name, index1);
-        }
-        assert!(non_mask_counter + soft_mask_counter + hard_mask_counter == sequence.len(),
-            "The sum of masked bases does not match the sequence length ({}) for '{}'. This seems to be a bug", sequence.len(), record_name);
-
-        println!(
-            "Found {} hard-masked bases, {} soft-masked bases, {} non-masked bases in sequence '{}' (GC ratio: {:.2}, overall length: {})",
-            hard_mask_counter,
-            soft_mask_counter,
-            non_mask_counter,
-            record_name,
-            gc_counter as f64 / sequence.len() as f64,
-            sequence.len()
-        );
-    }).collect();
-    // TODO: store results in BED files AND a JSON summary file (so that eg jq can be used downstream)
-    println!("Done.");
+    // TODO: store results a JSON summary file OR print to stdout (so that eg jq can be used downstream)
+    println!("{}", json_output);
     Ok(())
 }
 
