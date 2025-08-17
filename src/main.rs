@@ -33,6 +33,13 @@ struct Cli {
     quiet: bool,
 
     #[arg(
+        long = "ignore-iupac",
+        default_value = "false",
+        help = "Enable this to avoid failing when encountering a sequence character that is not in ('A', 'C', 'T', 'G', 'N', 'a', 'c', 't', 'g', 'n')."
+    )]
+    ignore_iupac: bool,
+
+    #[arg(
         long = "no-bed-output",
         default_value = "false",
         help = "Do not store masking regions into BED files."
@@ -61,12 +68,6 @@ impl Cli {
                 format!("The output directory '{:?}' is a file.", self.output_dir),
             ))
         } else if !self.output_dir.exists() {
-            if !self.quiet {
-                println!(
-                    "Creating output directory '{:?}', as it does not yet exist.",
-                    self.output_dir
-                );
-            }
             fs::create_dir_all(&self.output_dir)
         } else {
             Ok(())
@@ -93,7 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut sequence_statistics: Vec<SequenceStatistics> = records
         .par_iter()
-        .flat_map(process_fasta(args.bed_output_dir().map(|pb| pb.as_path()), args.sequence_match_regex.as_str()))
+        .flat_map(process_fasta(args.bed_output_dir().map(|pb| pb.as_path()), args.sequence_match_regex.as_str(), args.ignore_iupac))
         .collect();
     sequence_statistics.sort_by_key(|s| s.sequence_name.clone());
 
@@ -115,6 +116,7 @@ mod tests {
             fasta_file: PathBuf::from("does-not-exist.fasta"),
             output_dir: PathBuf::from("output"),
             quiet: false,
+            ignore_iupac: false,
             no_bed_output: false,
             sequence_match_regex: ".*".to_string(),
         };

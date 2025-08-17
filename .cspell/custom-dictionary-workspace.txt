@@ -3,6 +3,7 @@ bioinformatics
 bstr
 FASTA
 fastats
+iupac
 MSVC
 rustc
 serde

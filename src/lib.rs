@@ -24,6 +24,7 @@ pub struct SequenceStatistics {
     pub soft_masked_ratio: f64,
     pub hard_masked_ratio: f64,
     pub gc_content: f64,
+    pub other_iupac_bases: usize,
     pub sequence_length: usize,
     pub checksum_sha256: String,
 }
@@ -31,14 +32,16 @@ pub struct SequenceStatistics {
 pub fn process_fasta(
     output_dir: Option<&Path>,
     sequence_match_regex: &str,
+    ignore_iupac: bool,
 ) -> impl Fn(&FastaRecord) -> Option<SequenceStatistics> {
-    move |record| process_fasta_record(record, output_dir, sequence_match_regex)
+    move |record| process_fasta_record(record, output_dir, sequence_match_regex, ignore_iupac)
 }
 
 fn process_fasta_record(
     record: &FastaRecord,
     output_dir: Option<&Path>,
     sequence_match_regex: &str,
+    ignore_iupac: bool,
 ) -> Option<SequenceStatistics> {
     let record_name: &str = record.definition().name().to_str().expect(
         format!(
@@ -67,6 +70,7 @@ fn process_fasta_record(
             soft_masked_ratio: 0.0,
             hard_masked_ratio: 0.0,
             gc_content: 0.0,
+            other_iupac_bases: 0,
             sequence_length: 0,
             checksum_sha256: "".to_string(),
         });
@@ -74,22 +78,23 @@ fn process_fasta_record(
 
     let mut sha256_hasher = Sha256::new();
 
-    let mut non_masked_bed_writer = create_bed_writer(output_dir, "non-masked", record_name);
-    let mut soft_masked_bed_writer = create_bed_writer(output_dir, "soft-masked", record_name);
-    let mut hard_masked_bed_writer = create_bed_writer(output_dir, "hard-masked", record_name);
+    let mut non_mask_bed_writer = create_bed_writer(output_dir, "non-masked", record_name);
+    let mut soft_mask_bed_writer = create_bed_writer(output_dir, "soft-masked", record_name);
+    let mut hard_mask_bed_writer = create_bed_writer(output_dir, "hard-masked", record_name);
 
     let sequence: &[u8] = record.sequence().as_ref();
 
     let mut index1: usize = 0;
     let mut gc_counter: usize = 0;
+    let mut other_iupac_bases_counter: usize = 0;
 
     let mut non_mask_counter: usize = 0;
     let mut soft_mask_counter: usize = 0;
     let mut hard_mask_counter: usize = 0;
 
     let mut non_mask_region_start1: Option<usize> = None;
-    let mut soft_masked_region_start1: Option<usize> = None;
-    let mut hard_masked_region_start1: Option<usize> = None;
+    let mut soft_mask_region_start1: Option<usize> = None;
+    let mut hard_mask_region_start1: Option<usize> = None;
 
     for base in sequence {
         index1 += 1;
@@ -122,21 +127,29 @@ fn process_fasta_record(
                 hard_mask_counter += 1;
                 hard_masking = true;
             }
-            _ => panic!("Unexpected base: '{}' in sequence '{}'.", *base as char, record_name),
+            _ => {
+                if !ignore_iupac {
+                    panic!("Unexpected base: '{}' in sequence '{}'.", *base as char, record_name);
+                } else if !is_unsupported_iupac_code(*base) {
+                    panic!("Unexpected (non-IUPAC) base: '{}' in sequence '{}'.", *base as char, record_name);
+                } else {
+                    other_iupac_bases_counter += 1;
+                }
+            }
         }
 
-        update_mask_region(&mut non_mask_region_start1, non_masking, non_masked_bed_writer.as_mut(), record_name, index1);
-        update_mask_region(&mut soft_masked_region_start1, soft_masking, soft_masked_bed_writer.as_mut(), record_name, index1);
-        update_mask_region(&mut hard_masked_region_start1, hard_masking, hard_masked_bed_writer.as_mut(), record_name, index1);
+        update_mask_region(&mut non_mask_region_start1, non_masking, non_mask_bed_writer.as_mut(), record_name, index1);
+        update_mask_region(&mut soft_mask_region_start1, soft_masking, soft_mask_bed_writer.as_mut(), record_name, index1);
+        update_mask_region(&mut hard_mask_region_start1, hard_masking, hard_mask_bed_writer.as_mut(), record_name, index1);
     }
 
     // Write the last regions if they were not closed yet (with index of base after last base).
-    update_mask_region(&mut non_mask_region_start1, false, non_masked_bed_writer.as_mut(), record_name, index1 + 1);
-    update_mask_region(&mut soft_masked_region_start1, false, soft_masked_bed_writer.as_mut(), record_name, index1 + 1);
-    update_mask_region(&mut hard_masked_region_start1, false, hard_masked_bed_writer.as_mut(), record_name, index1 + 1);
+    update_mask_region(&mut non_mask_region_start1, false, non_mask_bed_writer.as_mut(), record_name, index1 + 1);
+    update_mask_region(&mut soft_mask_region_start1, false, soft_mask_bed_writer.as_mut(), record_name, index1 + 1);
+    update_mask_region(&mut hard_mask_region_start1, false, hard_mask_bed_writer.as_mut(), record_name, index1 + 1);
 
     assert!(
-        non_mask_counter + soft_mask_counter + hard_mask_counter == sequence.len(),
+        non_mask_counter + soft_mask_counter + hard_mask_counter + other_iupac_bases_counter == sequence.len(),
         "The sum of masked bases does not match the sequence length ({}) for '{}'. This seems to be a bug.",
         sequence.len(),
         record_name
@@ -150,6 +163,7 @@ fn process_fasta_record(
         soft_masked_ratio: soft_mask_counter as f64 / sequence.len() as f64,
         hard_masked_ratio: hard_mask_counter as f64 / sequence.len() as f64,
         gc_content: gc_counter as f64 / sequence.len() as f64,
+        other_iupac_bases: other_iupac_bases_counter,
         sequence_length: sequence.len(),
         checksum_sha256: format!("{:x}", sha256_hasher.finalize()),
     });
@@ -207,6 +221,10 @@ fn update_mask_region<X: std::io::Write>(
     }
 }
 
+fn is_unsupported_iupac_code(base: u8) -> bool {
+    matches!(base, b'b' | b'B' | b'd' | b'D' | b'h' | b'H' | b'k' | b'K' | b'm' | b'M' | b'r' | b'R' | b's' | b'S' | b'v' | b'V' | b'w' | b'W' | b'y' | b'Y')
+}
+
 fn ensure_full_match_regex(regex: &str) -> String {
     let start_ok = regex.starts_with('^');
     let end_ok = regex.ends_with('$');
@@ -247,7 +265,7 @@ mod tests {
         );
 
         let tmpdir = tempfile::tempdir()?;
-        let stats = process_fasta_record(&record, Some(&tmpdir.path()), ".*");
+        let stats = process_fasta_record(&record, Some(&tmpdir.path()), ".*", false);
         assert!(stats.is_some());
         let stats = stats.unwrap();
 
@@ -275,9 +293,48 @@ mod tests {
         assert_eq!(stats.hard_masked_ratio, 5.0 / 150.0);
         
         assert_eq!(stats.gc_content, 73.0 / 150.0);
+        assert_eq!(stats.other_iupac_bases, 0);
         assert_eq!(stats.sequence_length, 150);
         assert_eq!(stats.checksum_sha256, "39d1aba0a51cb46ce7cef81ac808bf46e3594b0ccabcd77fabf19c2a395651fa");
         Ok(())
     }
     
+
+    #[test]
+    fn process_fasta_record_non_iupac_codes_ok() -> Result<(), Box<dyn Error>> {
+        let record = FastaRecord::new(
+            noodles_fasta::record::Definition::new("iupac_test_sequence", None),
+            noodles_fasta::record::Sequence::from(b"mMrvy".to_vec()),
+        );
+
+        let tmpdir = tempfile::tempdir()?;
+        let stats = process_fasta_record(&record, Some(&tmpdir.path()), ".*", true);
+        assert!(stats.is_some());
+        let stats = stats.unwrap();
+
+        // No BED files should have been created.
+        let non_masked_bed_path = tmpdir.path().join("test_sequence.non-masked.bed");
+        assert_eq!(non_masked_bed_path.exists(), false);       
+        let soft_masked_bed_path = tmpdir.path().join("test_sequence.soft-masked.bed");
+        assert_eq!(soft_masked_bed_path.exists(), false);
+        let hard_masked_bed_path = tmpdir.path().join("test_sequence.hard-masked.bed");
+        assert_eq!(hard_masked_bed_path.exists(), false);
+
+        assert_eq!(stats.sequence_name, "iupac_test_sequence");
+        assert_eq!(stats.non_masked_bases, 0);
+        assert_eq!(stats.non_masked_ratio, 0.0);
+
+        assert_eq!(stats.soft_masked_bases, 0);
+        assert_eq!(stats.soft_masked_ratio, 0.0);
+
+        assert_eq!(stats.hard_masked_bases, 0);
+        assert_eq!(stats.hard_masked_ratio, 0.0);
+        
+        assert_eq!(stats.gc_content, 0.0);
+        assert_eq!(stats.other_iupac_bases, 5);
+        assert_eq!(stats.sequence_length, 5);
+        assert_eq!(stats.checksum_sha256, "fed4eff301b269d726775e3a29cdc4b015b3b5d9e2d771ecf9964ccac590d30f");
+        Ok(())
+    }
+
 }
