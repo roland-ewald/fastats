@@ -5,6 +5,8 @@ use noodles_bed as bed;
 use noodles_core::Position;
 use noodles_fasta::Record as FastaRecord;
 use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
@@ -19,14 +21,19 @@ pub struct SequenceStatistics {
     pub hard_masked_bases: usize,
     pub gc_content: f64,
     pub sequence_length: usize,
+    pub checksum_sha256: String,
 }
 
-pub fn process_fasta(output_dir: &PathBuf) -> impl Fn(&FastaRecord) -> Option<SequenceStatistics> {
+pub fn process_fasta(
+    output_dir: Option<&PathBuf>,
+) -> impl Fn(&FastaRecord) -> Option<SequenceStatistics> {
     move |record| process_fasta_record(record, output_dir)
 }
 
-fn process_fasta_record(record: &FastaRecord, output_dir: &PathBuf) -> Option<SequenceStatistics> {
-    
+fn process_fasta_record(
+    record: &FastaRecord,
+    output_dir: Option<&PathBuf>,
+) -> Option<SequenceStatistics> {
     let record_name: &str = record.definition().name().to_str().expect(
         format!(
             "Failed to convert record name to string: '{}'",
@@ -43,27 +50,15 @@ fn process_fasta_record(record: &FastaRecord, output_dir: &PathBuf) -> Option<Se
             hard_masked_bases: 0,
             gc_content: 0.0,
             sequence_length: 0,
+            checksum_sha256: "".to_string(),
         });
     }
 
-    let mut non_masked_bed_writer = create_bed_writer(
-        output_dir
-            .join(&format!("{}-non-masked.bed", record_name))
-            .to_str()
-            .unwrap(),
-    );
-    let mut soft_masked_bed_writer = create_bed_writer(
-        output_dir
-            .join(&format!("{}-soft-masked.bed", record_name))
-            .to_str()
-            .unwrap(),
-    );
-    let mut hard_masked_bed_writer = create_bed_writer(
-        output_dir
-            .join(&format!("{}-hard-masked.bed", record_name))
-            .to_str()
-            .unwrap(),
-    );
+    let mut sha256_hasher = Sha256::new();
+
+    let mut non_masked_bed_writer = create_bed_writer(output_dir, "non-masked", record_name);
+    let mut soft_masked_bed_writer = create_bed_writer(output_dir, "soft-masked", record_name);
+    let mut hard_masked_bed_writer = create_bed_writer(output_dir, "hard-masked", record_name);
 
     let sequence: &[u8] = record.sequence().as_ref();
 
@@ -80,10 +75,12 @@ fn process_fasta_record(record: &FastaRecord, output_dir: &PathBuf) -> Option<Se
 
     for base in sequence {
         index1 += 1;
+
         let mut non_masking: bool = false;
         let mut soft_masking: bool = false;
         let mut hard_masking: bool = false;
 
+        sha256_hasher.update([*base]);
         match *base {
             b'C' | b'G' => {
                 gc_counter += 1;
@@ -119,21 +116,21 @@ fn process_fasta_record(record: &FastaRecord, output_dir: &PathBuf) -> Option<Se
         update_mask_region(
             &mut non_mask_region_start1,
             non_masking,
-            &mut non_masked_bed_writer,
+            non_masked_bed_writer.as_mut(),
             record_name,
             index1,
         );
         update_mask_region(
             &mut soft_masked_region_start1,
             soft_masking,
-            &mut soft_masked_bed_writer,
+            soft_masked_bed_writer.as_mut(),
             record_name,
             index1,
         );
         update_mask_region(
             &mut hard_masked_region_start1,
             hard_masking,
-            &mut hard_masked_bed_writer,
+            hard_masked_bed_writer.as_mut(),
             record_name,
             index1,
         );
@@ -151,13 +148,26 @@ fn process_fasta_record(record: &FastaRecord, output_dir: &PathBuf) -> Option<Se
         hard_masked_bases: hard_mask_counter,
         gc_content: gc_counter as f64 / sequence.len() as f64,
         sequence_length: sequence.len(),
+        checksum_sha256: format!("{:x}", sha256_hasher.finalize()),
     });
 }
 
-pub fn create_bed_writer(path: &str) -> BedWriter<3, BufWriter<File>> {
-    bed::io::writer::Builder::default()
-        .build_from_path(path)
-        .expect(&format!("Could not write to output BED file '{}'.", path))
+pub fn create_bed_writer(
+    output_dir: Option<&PathBuf>,
+    bed_ending: &str,
+    record_name: &str,
+) -> Option<BedWriter<3, BufWriter<File>>> {
+    output_dir.and_then(|output_dir| {
+        let output_path = output_dir.join(&format!("{}.{}.bed", record_name, bed_ending));
+        Some(
+            bed::io::writer::Builder::default()
+                .build_from_path(output_path.clone())
+                .expect(&format!(
+                    "Could not write to output BED file '{}'.",
+                    output_path.to_str().unwrap()
+                )),
+        )
+    })
 }
 
 pub fn write_bed_record<X: std::io::Write>(
@@ -178,17 +188,19 @@ pub fn write_bed_record<X: std::io::Write>(
 pub fn update_mask_region<X: std::io::Write>(
     region_start: &mut Option<usize>,
     masking: bool,
-    writer: &mut BedWriter<3, X>,
+    writer_opt: Option<&mut BedWriter<3, X>>,
     record_name: &str,
     index1: usize,
 ) {
-    if masking {
-        if region_start.is_none() {
-            *region_start = Some(index1);
+    if let Some(writer) = writer_opt {
+        if masking {
+            if region_start.is_none() {
+                *region_start = Some(index1);
+            }
+        } else if let Some(start1) = *region_start {
+            let _ = write_bed_record(writer, record_name, start1, index1);
+            *region_start = None;
         }
-    } else if let Some(start1) = *region_start {
-        let _ = write_bed_record(writer, record_name, start1, index1);
-        *region_start = None;
     }
 }
 

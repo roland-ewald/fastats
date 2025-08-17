@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
-use std::io::ErrorKind; 
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::result::Result;
 
@@ -24,7 +24,21 @@ struct Cli {
     )]
     output_dir: PathBuf,
 
-    // 1) quiet mode, 2) contig regex match, 3) json output file
+    #[arg(
+        short = 'q',
+        long = "quiet",
+        default_value = "false",
+        help = "Do not print results on stdout."
+    )]
+    quiet: bool,
+
+    #[arg(
+        long = "no-bed-output",
+        default_value = "false",
+        help = "Do not store masking regions into BED files."
+    )]
+    no_bed_output: bool,
+    // TODO: contig regex match
 }
 
 impl Cli {
@@ -40,13 +54,23 @@ impl Cli {
                 format!("The output directory '{:?}' is a file.", self.output_dir),
             ))
         } else if !self.output_dir.exists() {
-            println!(
-                "Creating output directory '{:?}', as it does not yet exist.",
-                self.output_dir
-            );
+            if !self.quiet {
+                println!(
+                    "Creating output directory '{:?}', as it does not yet exist.",
+                    self.output_dir
+                );
+            }
             fs::create_dir_all(&self.output_dir)
         } else {
             Ok(())
+        }
+    }
+
+    fn bed_output_dir(&self) -> Option<&PathBuf> {
+        if self.no_bed_output {
+            None
+        } else {
+            Some(&self.output_dir)
         }
     }
 }
@@ -54,26 +78,25 @@ impl Cli {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::parse();
     args.validate().expect("Failed to validate CLI arguments");
-    //TODO: print only if JSON output file given and not in quiet mode
-/*     println!(
-        "Input file: '{:?}'. Output directory: '{:?}'.\nNow loading the FASTA records...",
-        args.fasta_file, args.output_dir
-    ); */
 
-    let mut reader = File::open(args.fasta_file).map(BufReader::new).map(fasta::io::Reader::new)?;
+    let mut reader = File::open(&args.fasta_file)
+        .map(BufReader::new)
+        .map(fasta::io::Reader::new)?;
     let records: Vec<FastaRecord> = reader.records().collect::<Result<_, _>>()?;
-    
-    let record_processing = process_fasta(&args.output_dir);
-    let mut sequence_statistics: Vec<SequenceStatistics> = records.par_iter().flat_map(record_processing).collect();
+
+    let mut sequence_statistics: Vec<SequenceStatistics> = records
+        .par_iter()
+        .flat_map(process_fasta(args.bed_output_dir()))
+        .collect();
     sequence_statistics.sort_by_key(|s| s.sequence_name.clone());
 
     let json_output = serde_json::to_string_pretty(&sequence_statistics).unwrap();
-
-    // TODO: store results a JSON summary file OR print to stdout (so that eg jq can be used downstream)
-    println!("{}", json_output);
+    if !args.quiet {
+        println!("{}", json_output.clone());
+    }
+    fs::write(args.output_dir.join("summary.json"), json_output)?;
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -82,8 +105,10 @@ mod tests {
     #[test]
     fn cli_validation() {
         let cli = Cli {
-            fasta_file: PathBuf::from("test.fasta"),
+            fasta_file: PathBuf::from("does-not-exist.fasta"),
             output_dir: PathBuf::from("output"),
+            quiet: false,
+            no_bed_output: false,
         };
         // Test invalid input file
         assert!(cli.validate().is_err());
