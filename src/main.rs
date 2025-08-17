@@ -38,7 +38,14 @@ struct Cli {
         help = "Do not store masking regions into BED files."
     )]
     no_bed_output: bool,
-    // TODO: contig regex match
+
+    #[arg(
+        long = "match-regex",
+        default_value = ".*",
+        help = "Regular expression to focus the analysis on sequences matching a specific regular expression."
+    )]
+    sequence_match_regex: String,
+
 }
 
 impl Cli {
@@ -86,7 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut sequence_statistics: Vec<SequenceStatistics> = records
         .par_iter()
-        .flat_map(process_fasta(args.bed_output_dir()))
+        .flat_map(process_fasta(args.bed_output_dir(), args.sequence_match_regex.as_str()))
         .collect();
     sequence_statistics.sort_by_key(|s| s.sequence_name.clone());
 
@@ -109,6 +116,7 @@ mod tests {
             output_dir: PathBuf::from("output"),
             quiet: false,
             no_bed_output: false,
+            sequence_match_regex: ".*".to_string(),
         };
         // Test invalid input file
         assert!(cli.validate().is_err());

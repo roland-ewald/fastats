@@ -4,6 +4,7 @@ use bstr::ByteSlice;
 use noodles_bed as bed;
 use noodles_core::Position;
 use noodles_fasta::Record as FastaRecord;
+use regex::Regex;
 use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
@@ -19,6 +20,9 @@ pub struct SequenceStatistics {
     pub non_masked_bases: usize,
     pub soft_masked_bases: usize,
     pub hard_masked_bases: usize,
+    pub non_masked_ratio: f64,
+    pub soft_masked_ratio: f64,
+    pub hard_masked_ratio: f64,
     pub gc_content: f64,
     pub sequence_length: usize,
     pub checksum_sha256: String,
@@ -26,13 +30,15 @@ pub struct SequenceStatistics {
 
 pub fn process_fasta(
     output_dir: Option<&PathBuf>,
+    sequence_match_regex: &str,
 ) -> impl Fn(&FastaRecord) -> Option<SequenceStatistics> {
-    move |record| process_fasta_record(record, output_dir)
+    move |record| process_fasta_record(record, output_dir, sequence_match_regex)
 }
 
 fn process_fasta_record(
     record: &FastaRecord,
     output_dir: Option<&PathBuf>,
+    sequence_match_regex: &str,
 ) -> Option<SequenceStatistics> {
     let record_name: &str = record.definition().name().to_str().expect(
         format!(
@@ -42,12 +48,24 @@ fn process_fasta_record(
         .as_str(),
     );
 
+    // Ignore records that do not match the regex
+    let regex_matcher = Regex::new(ensure_full_match_regex(sequence_match_regex).as_str());
+    if regex_matcher.is_err() {
+        panic!("Invalid regular expression: '{}'", sequence_match_regex);
+    } else if !regex_matcher.unwrap().is_match(record_name) {
+        return None;
+    }
+
+    // Report empty sequences with all statistics set to zero.
     if record.sequence().len() == 0 {
         return Some(SequenceStatistics {
             sequence_name: record_name.to_string(),
             non_masked_bases: 0,
             soft_masked_bases: 0,
             hard_masked_bases: 0,
+            non_masked_ratio: 0.0,
+            soft_masked_ratio: 0.0,
+            hard_masked_ratio: 0.0,
             gc_content: 0.0,
             sequence_length: 0,
             checksum_sha256: "".to_string(),
@@ -146,13 +164,16 @@ fn process_fasta_record(
         non_masked_bases: non_mask_counter,
         soft_masked_bases: soft_mask_counter,
         hard_masked_bases: hard_mask_counter,
+        non_masked_ratio: non_mask_counter as f64 / sequence.len() as f64,
+        soft_masked_ratio: soft_mask_counter as f64 / sequence.len() as f64,
+        hard_masked_ratio: hard_mask_counter as f64 / sequence.len() as f64,
         gc_content: gc_counter as f64 / sequence.len() as f64,
         sequence_length: sequence.len(),
         checksum_sha256: format!("{:x}", sha256_hasher.finalize()),
     });
 }
 
-pub fn create_bed_writer(
+fn create_bed_writer(
     output_dir: Option<&PathBuf>,
     bed_ending: &str,
     record_name: &str,
@@ -170,7 +191,7 @@ pub fn create_bed_writer(
     })
 }
 
-pub fn write_bed_record<X: std::io::Write>(
+fn write_bed_record<X: std::io::Write>(
     writer: &mut BedWriter<3, X>,
     sequence_name: &str,
     start1: usize,
@@ -185,7 +206,7 @@ pub fn write_bed_record<X: std::io::Write>(
     Ok(())
 }
 
-pub fn update_mask_region<X: std::io::Write>(
+fn update_mask_region<X: std::io::Write>(
     region_start: &mut Option<usize>,
     masking: bool,
     writer_opt: Option<&mut BedWriter<3, X>>,
@@ -204,6 +225,20 @@ pub fn update_mask_region<X: std::io::Write>(
     }
 }
 
+fn ensure_full_match_regex(regex: &str) -> String {
+    let start_ok = regex.starts_with('^');
+    let end_ok = regex.ends_with('$');
+    if start_ok && end_ok {
+        regex.to_string()
+    } else if start_ok && !end_ok {
+        format!("{}$", regex)
+    } else if !start_ok && end_ok {
+        format!("^{}", regex)
+    } else {
+        format!("^{}$", regex)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -218,4 +253,17 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn ensure_full_match_regex_ok() {
+        assert_eq!(ensure_full_match_regex(".*"), "^.*$");
+        assert_eq!(ensure_full_match_regex("^.*"), "^.*$");
+        assert_eq!(ensure_full_match_regex(".*$"), "^.*$");
+        assert_eq!(ensure_full_match_regex("^.*$"), "^.*$");
+        assert_eq!(ensure_full_match_regex("abc"), "^abc$");
+        assert_eq!(ensure_full_match_regex("^abc"), "^abc$");
+        assert_eq!(ensure_full_match_regex("abc$"), "^abc$");
+        assert_eq!(ensure_full_match_regex("^abc$"), "^abc$");
+    }
+    
 }

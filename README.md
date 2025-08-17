@@ -20,3 +20,9 @@ fastats hg38.fasta | jq '.[].sequence_name'
 ```shell
 fastats hg38.fasta | jq '.[].sequence_length' | paste -sd+ | bc
 ```
+
+### Print stats for all sequences without a `_` in the name
+
+```shell
+fastats hg38.fasta  --match-regex "[^_]*"
+```
