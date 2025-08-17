@@ -10,8 +10,8 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::error::Error;
 use std::fs::File;
+use std::path::Path;
 use std::io::BufWriter;
-use std::path::PathBuf;
 use std::result::Result;
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,7 +29,7 @@ pub struct SequenceStatistics {
 }
 
 pub fn process_fasta(
-    output_dir: Option<&PathBuf>,
+    output_dir: Option<&Path>,
     sequence_match_regex: &str,
 ) -> impl Fn(&FastaRecord) -> Option<SequenceStatistics> {
     move |record| process_fasta_record(record, output_dir, sequence_match_regex)
@@ -37,7 +37,7 @@ pub fn process_fasta(
 
 fn process_fasta_record(
     record: &FastaRecord,
-    output_dir: Option<&PathBuf>,
+    output_dir: Option<&Path>,
     sequence_match_regex: &str,
 ) -> Option<SequenceStatistics> {
     let record_name: &str = record.definition().name().to_str().expect(
@@ -174,7 +174,7 @@ fn process_fasta_record(
 }
 
 fn create_bed_writer(
-    output_dir: Option<&PathBuf>,
+    output_dir: Option<&Path>,
     bed_ending: &str,
     record_name: &str,
 ) -> Option<BedWriter<3, BufWriter<File>>> {
@@ -264,6 +264,31 @@ mod tests {
         assert_eq!(ensure_full_match_regex("^abc"), "^abc$");
         assert_eq!(ensure_full_match_regex("abc$"), "^abc$");
         assert_eq!(ensure_full_match_regex("^abc$"), "^abc$");
+    }
+
+    #[test]
+    fn process_fasta_record_ok() -> Result<(), Box<dyn Error>> {
+        let record = FastaRecord::new(
+            noodles_fasta::record::Definition::new("test_sequence", None),
+            noodles_fasta::record::Sequence::from(
+                b"CTGTGCTGGCATAGTGGTCTCACCTCCGGCAGtatcaccaccactgggcacaagcttctccagcacagcaNNNNnactgtgtcttatttctccttgtactcccagtgttcacaccatgctgcactcacagaagactcttcgttgatattt".to_vec()),
+        );
+
+        let tmpdir = tempfile::tempdir()?;
+        let stats = process_fasta_record(&record, Some(&tmpdir.path()), ".*");
+        assert!(stats.is_some());
+        let stats = stats.unwrap();
+
+        // Check the output BED files
+        let non_masked_bed_path = tmpdir.path().join("test_sequence.non-masked.bed");
+        let soft_masked_bed_path = tmpdir.path().join("test_sequence.soft-masked.bed");
+        let hard_masked_bed_path = tmpdir.path().join("test_sequence.hard-masked.bed");
+
+        assert_eq!(stats.sequence_name, "test_sequence");
+        assert_eq!(stats.non_masked_bases, 32);
+        assert_eq!(stats.soft_masked_bases, 114);
+        assert_eq!(stats.hard_masked_bases, 5);
+        Ok(())
     }
     
 }

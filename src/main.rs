@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut sequence_statistics: Vec<SequenceStatistics> = records
         .par_iter()
-        .flat_map(process_fasta(args.bed_output_dir(), args.sequence_match_regex.as_str()))
+        .flat_map(process_fasta(args.bed_output_dir().map(|pb| pb.as_path()), args.sequence_match_regex.as_str()))
         .collect();
     sequence_statistics.sort_by_key(|s| s.sequence_name.clone());
 
