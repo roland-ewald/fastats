@@ -118,43 +118,25 @@ fn process_fasta_record(
                 soft_mask_counter += 1;
                 soft_masking = true;
             }
-            b'N' => {
+            b'n' | b'N' => {
                 hard_mask_counter += 1;
                 hard_masking = true;
             }
-            b'n' => {
-                soft_mask_counter += 1;
-                hard_mask_counter += 1;
-                soft_masking = true;
-                hard_masking = true;
-            }
-            _ => panic!("Unexpected base: '{}'", *base as char),
+            _ => panic!("Unexpected base: '{}' in sequence '{}'.", *base as char, record_name),
         }
 
-        update_mask_region(
-            &mut non_mask_region_start1,
-            non_masking,
-            non_masked_bed_writer.as_mut(),
-            record_name,
-            index1,
-        );
-        update_mask_region(
-            &mut soft_masked_region_start1,
-            soft_masking,
-            soft_masked_bed_writer.as_mut(),
-            record_name,
-            index1,
-        );
-        update_mask_region(
-            &mut hard_masked_region_start1,
-            hard_masking,
-            hard_masked_bed_writer.as_mut(),
-            record_name,
-            index1,
-        );
+        update_mask_region(&mut non_mask_region_start1, non_masking, non_masked_bed_writer.as_mut(), record_name, index1);
+        update_mask_region(&mut soft_masked_region_start1, soft_masking, soft_masked_bed_writer.as_mut(), record_name, index1);
+        update_mask_region(&mut hard_masked_region_start1, hard_masking, hard_masked_bed_writer.as_mut(), record_name, index1);
     }
+
+    // Write the last regions if they were not closed yet (with index of base after last base).
+    update_mask_region(&mut non_mask_region_start1, false, non_masked_bed_writer.as_mut(), record_name, index1 + 1);
+    update_mask_region(&mut soft_masked_region_start1, false, soft_masked_bed_writer.as_mut(), record_name, index1 + 1);
+    update_mask_region(&mut hard_masked_region_start1, false, hard_masked_bed_writer.as_mut(), record_name, index1 + 1);
+
     assert!(
-        non_mask_counter + soft_mask_counter + hard_mask_counter >= sequence.len(), // '>=' because 'n' counts as both soft and hard masked
+        non_mask_counter + soft_mask_counter + hard_mask_counter == sequence.len(),
         "The sum of masked bases does not match the sequence length ({}) for '{}'. This seems to be a bug.",
         sequence.len(),
         record_name
@@ -200,7 +182,7 @@ fn write_bed_record<X: std::io::Write>(
     let record = RecordBuf::<3>::builder()
         .set_reference_sequence_name(sequence_name)
         .set_feature_start(Position::try_from(start1)?)
-        .set_feature_end(Position::try_from(end1)?)
+        .set_feature_end(Position::try_from(end1 - 1)?) // Method is called *after* the end of region is reached, so we need to subtract 1.
         .build();
     writer.write_feature_record(&record)?;
     Ok(())
@@ -245,16 +227,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn write_bed_record_ok() -> Result<(), Box<dyn Error>> {
-        {
-            let mut writer: BedWriter<3, BufWriter<File>> =
-                bed::io::writer::Builder::default().build_from_path("test.bed")?;
-            write_bed_record(&mut writer, "chr2", 123, 124)?;
-        }
-        Ok(())
-    }
-
-    #[test]
     fn ensure_full_match_regex_ok() {
         assert_eq!(ensure_full_match_regex(".*"), "^.*$");
         assert_eq!(ensure_full_match_regex("^.*"), "^.*$");
@@ -271,7 +243,7 @@ mod tests {
         let record = FastaRecord::new(
             noodles_fasta::record::Definition::new("test_sequence", None),
             noodles_fasta::record::Sequence::from(
-                b"CTGTGCTGGCATAGTGGTCTCACCTCCGGCAGtatcaccaccactgggcacaagcttctccagcacagcaNNNNnactgtgtcttatttctccttgtactcccagtgttcacaccatgctgcactcacagaagactcttcgttgatattt".to_vec()),
+                b"CTGTGCTGGCATAGTGGTCTCACCTCCGGCAGtatcaccaccactgggcacaagcttctccagcacagcaNNnNnactgtgtcttatttctccttgtactcccagtgttcacaccatgctgcactcacagaagactcttcgttgatattt".to_vec()),
         );
 
         let tmpdir = tempfile::tempdir()?;
@@ -281,13 +253,30 @@ mod tests {
 
         // Check the output BED files
         let non_masked_bed_path = tmpdir.path().join("test_sequence.non-masked.bed");
+        let non_masked_bed = std::fs::read_to_string(non_masked_bed_path)?;
+        assert_eq!(non_masked_bed, "test_sequence\t0\t32\n");
+        
         let soft_masked_bed_path = tmpdir.path().join("test_sequence.soft-masked.bed");
+        let soft_masked_bed = std::fs::read_to_string(soft_masked_bed_path)?;
+        assert_eq!(soft_masked_bed, "test_sequence\t32\t70\ntest_sequence\t75\t150\n");
+
         let hard_masked_bed_path = tmpdir.path().join("test_sequence.hard-masked.bed");
+        let hard_masked_bed = std::fs::read_to_string(hard_masked_bed_path)?;
+        assert_eq!(hard_masked_bed, "test_sequence\t70\t75\n");
 
         assert_eq!(stats.sequence_name, "test_sequence");
         assert_eq!(stats.non_masked_bases, 32);
-        assert_eq!(stats.soft_masked_bases, 114);
+        assert_eq!(stats.non_masked_ratio, 32.0 / 150.0);
+
+        assert_eq!(stats.soft_masked_bases, 113);
+        assert_eq!(stats.soft_masked_ratio, 113.0 / 150.0);
+
         assert_eq!(stats.hard_masked_bases, 5);
+        assert_eq!(stats.hard_masked_ratio, 5.0 / 150.0);
+        
+        assert_eq!(stats.gc_content, 73.0 / 150.0);
+        assert_eq!(stats.sequence_length, 150);
+        assert_eq!(stats.checksum_sha256, "39d1aba0a51cb46ce7cef81ac808bf46e3594b0ccabcd77fabf19c2a395651fa");
         Ok(())
     }
     

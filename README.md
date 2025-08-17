@@ -2,7 +2,7 @@
 
 CLI to generate statistics from FASTA files:
 
-- Generates **BED files** for **non-masked**, **soft-masked**, and **hard-masked regions**, per sequence.
+- Generates **BED files** for **non-masked** (`A|C|G|T`), **soft-masked** (`a|c|g|t`), and **hard-masked regions** (`n|N`), per sequence.
 - Stores **overall statistics** (GC content, ratios of masked bases) to `stdout` and **JSON**.
 
 ## Details
@@ -49,3 +49,7 @@ fastats hg38.fasta | jq '.[].sequence_length' | paste -sd+ | bc
 ```shell
 fastats hg38.fasta --match-regex "[^_]*"
 ```
+
+## Notes
+
+- Note that the base `n` is _not_ considered soft-masked (so the sum of all non-masked, soft-masked, and hard-masked bases equals the overall sequence length).
