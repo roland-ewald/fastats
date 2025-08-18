@@ -5,6 +5,10 @@ CLI to generate statistics from [FASTA](https://en.wikipedia.org/wiki/FASTA_form
 - Generates **[BED](https://en.wikipedia.org/wiki/BED_(file_format)) files** for **non-masked** (`A|C|G|T`), **soft-masked** (`a|c|g|t`), and **hard-masked regions** (`n|N`), per sequence.
 - Stores **overall statistics** (GC content, ratios of masked bases) to `stdout` and **JSON**.
 
+[![Crate](https://img.shields.io/crates/v/fastats.svg)](https://crates.io/crates/fastats)
+[![Docs](https://docs.rs/fastats/badge.svg)](https://docs.rs/fastats)
+[![Rust](https://github.com/roland-ewald/fastats/actions/workflows/rust.yml/badge.svg)](https://github.com/roland-ewald/fastats/actions/workflows/rust.yml)
+
 ## Details
 
 ```text
